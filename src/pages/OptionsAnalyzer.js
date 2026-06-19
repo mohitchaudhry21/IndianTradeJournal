@@ -29,7 +29,7 @@ function StatCard({ label, value, color }) {
   return (
     <div style={{ background: 'var(--bg-card2)', borderRadius: 8, padding: '10px 12px' }}>
       <div style={{ fontSize: 9, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 3 }}>{label}</div>
-      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 600, color: color || 'var(--text-primary)' }}>{value}</div>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600, color: color || 'var(--text-primary)' }}>{value}</div>
     </div>
   );
 }
@@ -128,16 +128,55 @@ export default function OptionsAnalyzer() {
     let cancelled = false;
 
     if (!isMarketOpen()) {
-      const snap = loadAnalysisSnapshot(position.positionId);
-      if (snap) {
-        setChainData(snap.chainData || {});
-        setChainSource(snap.chainSource || null);
-        setAngelLtpByLeg(snap.angelLtpByLeg || {});
-        setLastUpdated(snap.savedAt || null);
-      } else {
-        setChainError('Market is closed and no earlier snapshot from today is available — open this position once during market hours to enable after-hours analysis.');
-      }
-      return;
+      // Market is closed — try AngelOne once for EOD/closing values, then
+      // fall back to a saved snapshot. Don't poll; one fetch is enough since
+      // prices won't change until next open.
+      setUsingSnapshot(true);
+
+      const tryLiveEod = () => {
+        const symbol = toNseSymbol(position.instrument);
+        setLoadingChain(true);
+        fetchOptionChain(symbol, position.expiry, RISK_FREE_RATE).then(result => {
+          if (cancelled) return;
+          setLoadingChain(false);
+          if (result.ok && result.rows?.length) {
+            // Got EOD data from AngelOne — use it and save as snapshot
+            setChainSource(result.source);
+            setChainError(null);
+            const byLeg = {};
+            const angelLegs = [];
+            position.legs.forEach(leg => {
+              const row = result.rows.find(r => Math.abs(r.strike - leg.strike) < 0.01);
+              const legData = row ? row[leg.optionType] : null;
+              if (legData) {
+                byLeg[leg.id] = { ltp: legData.ltp, iv: legData.iv, oi: legData.oi };
+                if (!legData.ltp) angelLegs.push({ instrument: position.instrument, strike: leg.strike, optionType: leg.optionType, expiry: position.angelExpiry || '' });
+              }
+            });
+            setChainData(byLeg);
+            if (result.underlyingValue) setLiveSpot(result.underlyingValue);
+            const snap = { chainData: byLeg, chainSource: result.source, angelLtpByLeg: {}, savedAt: Date.now() };
+            saveAnalysisSnapshot(position.positionId, snap);
+            setSnapshotSavedAt(snap.savedAt);
+            setLastUpdated(snap.savedAt);
+          } else {
+            // AngelOne couldn't provide data — try saved snapshot
+            const snap = loadAnalysisSnapshot(position.positionId);
+            if (snap) {
+              setChainData(snap.chainData || {});
+              setChainSource(snap.chainSource || null);
+              setAngelLtpByLeg(snap.angelLtpByLeg || {});
+              setLastUpdated(snap.savedAt || null);
+              setSnapshotSavedAt(snap.savedAt);
+            } else {
+              setChainError('Market is closed. Opening this position during market hours will enable after-hours analysis using closing prices.');
+            }
+          }
+        });
+      };
+
+      tryLiveEod();
+      return () => { cancelled = true; };
     }
 
     const fetchChain = (isFirstLoad) => {
@@ -450,7 +489,7 @@ export default function OptionsAnalyzer() {
                     <>
                       <line x1={xPos} y1={padT} x2={xPos} y2={H - padB} stroke="var(--accent)" strokeWidth="1" strokeDasharray="3,3" />
                       <rect x={xPos - 58} y={2} width={116} height={18} rx={4} fill="var(--bg-card2)" stroke="var(--border)" />
-                      <text x={xPos} y={14} fontSize="10" fill="var(--text-primary)" textAnchor="middle" fontFamily="'JetBrains Mono', monospace">
+                      <text x={xPos} y={14} fontSize="10" fill="var(--text-primary)" textAnchor="middle" fontFamily="inherit">
                         Spot: {currentSpot.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
                       </text>
                     </>
@@ -470,7 +509,7 @@ export default function OptionsAnalyzer() {
 
           <div style={{ textAlign: 'center', marginTop: 10 }}>
             <span style={{
-              fontSize: 13, fontFamily: "'JetBrains Mono', monospace", padding: '5px 12px', borderRadius: 6,
+              fontSize: 13, fontFamily: 'var(--font-mono)', padding: '5px 12px', borderRadius: 6,
               background: curPnl >= 0 ? 'var(--profit-dim)' : 'var(--loss-dim)',
               color: curPnl >= 0 ? 'var(--profit)' : 'var(--loss)',
             }}>
@@ -498,7 +537,7 @@ export default function OptionsAnalyzer() {
                       if (!isNaN(v)) setScenarioSpot(v);
                     }}
                     style={{
-                      width: 90, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace",
+                      width: 90, textAlign: 'right', fontFamily: 'var(--font-mono)',
                       fontSize: 15, fontWeight: 600, color: 'var(--text-primary)',
                       background: 'var(--bg-card2)', border: '1px solid var(--border)', borderRadius: 5,
                       padding: '4px 8px',
@@ -566,7 +605,7 @@ export default function OptionsAnalyzer() {
               ].map(([label, val]) => (
                 <div key={label} style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{label}</span>
-                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 600 }}>{val}</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600 }}>{val}</span>
                 </div>
               ))}
             </div>
@@ -574,7 +613,7 @@ export default function OptionsAnalyzer() {
 
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px' }}>
             <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 10 }}>Standard deviation</div>
-            <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', fontFamily: "'JetBrains Mono', monospace" }}>
+            <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', fontFamily: 'var(--font-mono)' }}>
               <tbody>
                 <tr><td style={{ padding: '3px 0', fontFamily: 'Inter, sans-serif' }}>1 SD</td><td style={{ textAlign: 'right' }}>{Math.round(sd1).toLocaleString('en-IN')}</td><td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text-secondary)' }}>{Math.round(currentSpot - sd1).toLocaleString('en-IN')} - {Math.round(currentSpot + sd1).toLocaleString('en-IN')}</td></tr>
                 <tr><td style={{ padding: '3px 0', fontFamily: 'Inter, sans-serif' }}>2 SD</td><td style={{ textAlign: 'right' }}>{Math.round(sd2).toLocaleString('en-IN')}</td><td style={{ textAlign: 'right', fontSize: 11, color: 'var(--text-secondary)' }}>{Math.round(currentSpot - sd2).toLocaleString('en-IN')} - {Math.round(currentSpot + sd2).toLocaleString('en-IN')}</td></tr>
@@ -584,7 +623,7 @@ export default function OptionsAnalyzer() {
 
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px' }}>
             <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>Target day futures</div>
-            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 15, fontWeight: 600 }}>{futPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 15, fontWeight: 600 }}>{futPrice.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Implied by carry to target date</div>
           </div>
         </div>
@@ -599,7 +638,7 @@ export default function OptionsAnalyzer() {
             </div>
             <button onClick={selectAll} style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 11, cursor: 'pointer' }}>select all</button>
           </div>
-          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', fontFamily: "'JetBrains Mono', monospace" }}>
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', fontFamily: 'var(--font-mono)' }}>
             <thead>
               <tr style={{ color: 'var(--text-muted)' }}>
                 <th style={{ width: 26 }}></th>
@@ -648,7 +687,7 @@ export default function OptionsAnalyzer() {
 
         <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 16px' }}>
           <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 10 }}>P&L at key prices</div>
-          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', fontFamily: "'JetBrains Mono', monospace" }}>
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', fontFamily: 'var(--font-mono)' }}>
             <thead>
               <tr style={{ color: 'var(--text-muted)' }}>
                 <th style={{ textAlign: 'left', fontFamily: 'Inter, sans-serif', fontWeight: 500, padding: '3px 0' }}>Spot</th>
