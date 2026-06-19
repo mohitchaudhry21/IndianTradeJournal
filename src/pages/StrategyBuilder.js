@@ -15,7 +15,7 @@ function fmt(value, decimals = 2) {
   return Number.isFinite(n) ? n.toFixed(decimals) : '—';
 }
 
-import { generateMarketTimestamps, isMonthlyExpiry } from '../utils/marketHours';
+import { generateMarketTimestamps, isMonthlyExpiry, isMarketOpen } from '../utils/marketHours';
 
 // OI change is stored as an absolute delta (changeInOi), not a percentage —
 // derive the percentage from the implied previous OI. Returns null rather
@@ -256,8 +256,9 @@ export default function StrategyBuilder() {
     };
 
     fetchChain(true);
-    const intervalId = setInterval(() => fetchChain(false), 10000);
-    return () => { cancelled = true; clearInterval(intervalId); };
+    // Only poll during market hours — outside hours, one EOD fetch is enough
+    const intervalId = isMarketOpen() ? setInterval(() => fetchChain(false), 10000) : null;
+    return () => { cancelled = true; if (intervalId) clearInterval(intervalId); };
   }, [instrument, selectedExpiry]);
 
   // Scroll ATM row into view only on the first chain load for this instrument/expiry.
@@ -468,8 +469,8 @@ export default function StrategyBuilder() {
         <div className="page-title">Strategy builder</div>
         {chainSource && (
           <span style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 5 }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--profit)', display: 'inline-block' }} />
-            {chainSource === 'nse' ? 'live from NSE' : 'live from AngelOne'}
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: isMarketOpen() ? 'var(--profit)' : '#FFA53D', display: 'inline-block' }} />
+            {isMarketOpen() ? 'live' : 'EOD'} from {chainSource === 'nse' ? 'NSE' : 'AngelOne'}
           </span>
         )}
       </div>
